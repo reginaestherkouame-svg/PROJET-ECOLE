@@ -2,53 +2,122 @@
 include 'db.php';
 include 'header.php';
 
-// Sécurité
-if(!isset($_SESSION['user'])) header("Location: index.php");
-
-// --- 1. SUPPRESSION ---
-if(isset($_GET['delete'])) {
-    $id = $_GET['delete'];
-    $pdo->prepare("DELETE FROM professeurs WHERE id = ?")->execute([$id]);
-    echo "<script>window.location.href='profs_bts.php';</script>";
+if(!isset($_SESSION['user'])) {
+    header("Location: index.php");
+    exit();
 }
 
-// --- 2. AJOUT ---
 $notice = '';
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add') {
-    $nom = trim($_POST['nom']);
-    $coord = trim($_POST['coordonnees']);
-    $filiere = trim($_POST['filiere']);
-    $categorie = 'BTS'; // <--- C'EST ICI QUE ÇA CHANGE
 
-    if ($nom && $filiere) {
-        $stmt = $pdo->prepare('INSERT INTO professeurs (nom_complet, contact, filiere, categorie) VALUES (?,?,?,?)');
-        if ($stmt->execute([$nom, $coord, $filiere, $categorie])) {
-            $notice = '<div class="alert alert-success alert-dismissible fade show">Professeur BTS ajouté.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
+// --- 1. SUPPRESSION SÉCURISÉE ---
+if(isset($_GET['delete'])) {
+    try {
+        $id = (int)$_GET['delete'];
+        
+        // Vérifier existence avec catégorie BTS
+        $check = $pdo->prepare("SELECT id FROM professeurs WHERE id = ? AND categorie = 'BTS'");
+        $check->execute([$id]);
+        
+        if($check->rowCount() > 0) {
+            $stmt = $pdo->prepare("DELETE FROM professeurs WHERE id = ? AND categorie = 'BTS'");
+            if($stmt->execute([$id])) {
+                $notice = '<div class="alert alert-success alert-dismissible fade show">
+                    <i class="fas fa-check-circle"></i> Professeur BTS supprimé avec succès.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>';
+            } else {
+                $notice = '<div class="alert alert-danger alert-dismissible fade show">
+                    <i class="fas fa-exclamation-circle"></i> Erreur lors de la suppression.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>';
+            }
         } else {
-            $notice = '<div class="alert alert-danger">Erreur technique.</div>';
+            $notice = '<div class="alert alert-warning alert-dismissible fade show">
+                <i class="fas fa-info-circle"></i> Professeur non trouvé.
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>';
         }
-    } else {
-        $notice = '<div class="alert alert-warning">Champs obligatoires manquants.</div>';
+    } catch (Exception $e) {
+        $notice = '<div class="alert alert-danger alert-dismissible fade show">
+            <i class="fas fa-exclamation-circle"></i> Erreur: ' . htmlspecialchars($e->getMessage()) . '
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>';
     }
 }
 
-// --- 3. RECHERCHE & LISTE ---
-$search = isset($_GET['q']) ? $_GET['q'] : '';
-$sql = "SELECT * FROM professeurs WHERE categorie = 'BTS'"; // FILTRE SUR BTS
-
-if($search) {
-    $sql .= " AND (nom_complet LIKE :q OR filiere LIKE :q)";
-    $stmt = $pdo->prepare($sql . " ORDER BY id DESC");
-    $stmt->execute(['q' => "%$search%"]);
-} else {
-    $stmt = $pdo->query($sql . " ORDER BY id DESC");
+// --- 2. AJOUT PROFESSEUR BTS ---
+if(isset($_POST['add'])) {
+    try {
+        $nom = trim(htmlspecialchars($_POST['nom'] ?? ''));
+        $contact = trim(htmlspecialchars($_POST['contact'] ?? ''));
+        $filiere = trim(htmlspecialchars($_POST['filiere'] ?? ''));
+        
+        // Validation
+        if (empty($nom)) {
+            $notice = '<div class="alert alert-warning alert-dismissible fade show">
+                <i class="fas fa-exclamation-triangle"></i> Le nom est obligatoire.
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>';
+        } else if (strlen($nom) < 3) {
+            $notice = '<div class="alert alert-warning alert-dismissible fade show">
+                <i class="fas fa-exclamation-triangle"></i> Le nom doit avoir au moins 3 caractères.
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>';
+        } else {
+            $sql = "INSERT INTO professeurs (nom_complet, contact, filiere, categorie) 
+                    VALUES (?, ?, ?, 'BTS')";
+            
+            $stmt = $pdo->prepare($sql);
+            if($stmt->execute([$nom, $contact, $filiere])) {
+                $notice = '<div class="alert alert-success alert-dismissible fade show">
+                    <i class="fas fa-check-circle"></i> Professeur BTS enregistré avec succès! 🎉
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>';
+            } else {
+                $notice = '<div class="alert alert-danger alert-dismissible fade show">
+                    <i class="fas fa-exclamation-circle"></i> Erreur lors de l\'enregistrement.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>';
+            }
+        }
+    } catch (Exception $e) {
+        $notice = '<div class="alert alert-danger alert-dismissible fade show">
+            <i class="fas fa-exclamation-circle"></i> Erreur: ' . htmlspecialchars($e->getMessage()) . '
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>';
+    }
 }
-$profs = $stmt->fetchAll();
+
+// --- 3. RECHERCHE & LISTE PROFESSEURS BTS ---
+try {
+    $search = isset($_GET['q']) ? trim(htmlspecialchars($_GET['q'])) : '';
+    
+    if($search) {
+        $sql = "SELECT * FROM professeurs WHERE categorie = 'BTS' 
+                AND (nom_complet LIKE ? OR filiere LIKE ? OR contact LIKE ?) 
+                ORDER BY nom_complet ASC";
+        $stmt = $pdo->prepare($sql);
+        $searchTerm = "%$search%";
+        $stmt->execute([$searchTerm, $searchTerm, $searchTerm]);
+    } else {
+        $sql = "SELECT * FROM professeurs WHERE categorie = 'BTS' ORDER BY nom_complet ASC";
+        $stmt = $pdo->query($sql);
+    }
+    $profs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $profs = [];
+    $notice .= '<div class="alert alert-danger alert-dismissible fade show">
+        <i class="fas fa-exclamation-circle"></i> Erreur de récupération: ' . htmlspecialchars($e->getMessage()) . '
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>';
+}
 ?>
 
 <div class="row g-4">
     <div class="col-12">
-        <h2 class="fw-bold" style="color: #11998e;"><i class="fas fa-laptop-code"></i> Gestion Professeurs (Niveau BTS)</h2>
+        <h2 class="fw-bold" style="color: #11998e;">
+            <i class="fas fa-laptop-code"></i> Gestion Professeurs (Niveau BTS)
+        </h2>
         <?= $notice ?>
     </div>
 
@@ -60,21 +129,20 @@ $profs = $stmt->fetchAll();
             </div>
             <div class="card-body">
                 <form method="post">
-                    <input type="hidden" name="action" value="add">
                     <div class="mb-3">
-                        <label class="form-label fw-bold small text-muted">NOM COMPLET</label>
-                        <input type="text" name="nom" class="form-control" required>
+                        <label class="form-label fw-bold small text-muted">NOM COMPLET <span class="text-danger">*</span></label>
+                        <input type="text" name="nom" class="form-control" placeholder="Ex: Marie Leclerc" required minlength="3">
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-bold small text-muted">CONTACT</label>
-                        <input type="text" name="coordonnees" class="form-control">
+                        <input type="text" name="contact" class="form-control" placeholder="Tél/Email">
                     </div>
                     <div class="mb-4">
                         <label class="form-label fw-bold small text-muted">FILIÈRE</label>
-                        <input type="text" name="filiere" class="form-control" required>
+                        <input type="text" name="filiere" class="form-control" placeholder="Ex: Informatique...">
                     </div>
-                    <button class="btn text-white w-100 fw-bold" type="submit" style="background: #11998e;">
-                        Enregistrer
+                    <button class="btn text-white w-100 fw-bold" type="submit" name="add" style="background: #11998e;">
+                        <i class="fas fa-save me-2"></i> Enregistrer
                     </button>
                 </form>
             </div>
@@ -85,38 +153,84 @@ $profs = $stmt->fetchAll();
     <div class="col-md-8">
         <div class="card card-custom">
             <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
-                <h5 class="mb-0 fw-bold text-secondary">Liste des enseignants BTS</h5>
-                <form method="get" class="d-flex">
-                    <input type="text" name="q" class="form-control form-control-sm me-2" placeholder="Chercher..." value="<?= htmlspecialchars($search) ?>">
-                    <button type="submit" class="btn btn-sm btn-success"><i class="fas fa-search"></i></button>
-                    <?php if($search): ?><a href="profs_bts.php" class="btn btn-sm btn-light ms-1">X</a><?php endif; ?>
+                <h5 class="mb-0 fw-bold text-secondary">
+                    <i class="fas fa-list me-2"></i> Liste des enseignants BTS (<?= count($profs) ?> profs)
+                </h5>
+                <form method="get" class="d-flex gap-2">
+                    <input type="text" name="q" class="form-control form-control-sm" placeholder="Chercher..." 
+                           value="<?= htmlspecialchars($_GET['q'] ?? '') ?>" style="max-width: 200px;">
+                    <button type="submit" class="btn btn-sm btn-success">
+                        <i class="fas fa-search"></i>
+                    </button>
+                    <?php if(isset($_GET['q'])): ?>
+                        <a href="profs_bts.php" class="btn btn-sm btn-light">
+                            <i class="fas fa-times"></i> Réinitialiser
+                        </a>
+                    <?php endif; ?>
                 </form>
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
                     <table class="table table-hover mb-0 align-middle">
                         <thead class="table-light">
-                            <tr><th>Nom</th><th>Contact</th><th>Filière</th><th class="text-end">Action</th></tr>
+                            <tr>
+                                <th>Nom</th>
+                                <th>Contact</th>
+                                <th>Filière</th>
+                                <th class="text-end">Action</th>
+                            </tr>
                         </thead>
                         <tbody>
-                            <?php foreach($profs as $row): ?>
-                            <tr>
-                                <td class="fw-bold text-dark">
-                                    <i class="fas fa-user-circle text-success me-2"></i><?= htmlspecialchars($row['nom_complet']) ?>
-                                </td>
-                                <td><?= htmlspecialchars($row['contact']) ?></td>
-                                <td><span class="badge bg-success"><?= htmlspecialchars($row['filiere']) ?></span></td>
-                                <td class="text-end">
-                                    <a href="profs_bts.php?delete=<?= $row['id'] ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('Supprimer ?');"><i class="fas fa-trash"></i></a>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
+                            <?php if(empty($profs)): ?>
+                                <tr>
+                                    <td colspan="4" class="text-center p-4 text-muted">
+                                        <i class="fas fa-inbox fs-3"></i><br>
+                                        Aucun professeur BTS trouvé.
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach($profs as $row): ?>
+                                <tr class="table-row-hover">
+                                    <td class="fw-bold text-dark">
+                                        <i class="fas fa-user-circle text-success me-2"></i><?= htmlspecialchars($row['nom_complet'] ?? '') ?>
+                                    </td>
+                                    <td>
+                                        <?php if(!empty($row['contact'])): ?>
+                                            <small><?= htmlspecialchars($row['contact']) ?></small>
+                                        <?php else: ?>
+                                            <small class="text-muted">-</small>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php if(!empty($row['filiere'])): ?>
+                                            <span class="badge bg-success">
+                                                <?= htmlspecialchars($row['filiere']) ?>
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="text-muted">-</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="text-end">
+                                        <a href="profs_bts.php?delete=<?= (int)($row['id'] ?? 0) ?>" class="btn btn-sm btn-outline-danger" 
+                                           onclick="return confirm('Êtes-vous sûr de vouloir supprimer ce professeur ?');">
+                                            <i class="fas fa-trash-alt"></i> Supprimer
+                                        </a>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
-                    <?php if(empty($profs)) echo "<div class='p-4 text-center text-muted'>Aucun professeur BTS trouvé.</div>"; ?>
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+<style>
+    .table-row-hover:hover {
+        background-color: #e6f9f2;
+    }
+</style>
+
 <?php include 'footer.php'; ?>
